@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Test WebSocket</title>
+</head>
+<body>
+    <h1>Test connexion WebSocket</h1>
+    <div id="status">En attente...</div>
+    <button onclick="testConnection()">Tester connexion</button>
+    
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script>
+        function testConnection() {
+            const status = document.getElementById('status');
+            status.innerHTML = '🔌 Connexion en cours...';
+            
+            const socket = io('https://taxi-paint-server.onrender.com');
+            
+            socket.on('connect', () => {
+                status.innerHTML = '✅ CONNECTÉ ! ID: ' + socket.id;
+                status.style.color = 'green';
+            });
+            
+            socket.on('connect_error', (error) => {
+                status.innerHTML = '❌ ERREUR: ' + error.message;
+                status.style.color = 'red';
+            });
+            
+            socket.on('disconnect', () => {
+                status.innerHTML = '❌ DÉCONNECTÉ';
+                status.style.color = 'orange';
+            });
+        }
+        
+        // Test automatique au chargement
+        window.onload = testConnection;
+    </script>
+</body>
+</html>
+
+<!-- <!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Test Taxi Paint</title>
+    <style>
+        body { font-family: Arial; padding: 20px; }
+        button { padding: 15px; font-size: 18px; margin: 10px; cursor: pointer; }
+        input { padding: 10px; font-size: 16px; width: 200px; }
+        #logs { background: #f0f0f0; padding: 20px; margin-top: 20px; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <h1>🚕 Test Taxi Paint Server</h1>
+    
+    <button onclick="createRoom()">🎮 Créer une Room</button>
+    <br>
+    <input id="codeInput" placeholder="Code de la room">
+    <button onclick="joinRoom()">🚪 Rejoindre</button>
+    
+    <hr>
+    <h2>📋 Logs :</h2>
+    <div id="logs"></div>
+    
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script>
+        // 🔥 TON URL RENDER
+        const socket = io('https://taxi-paint-server.onrender.com');
+        
+        socket.on('connect', () => {
+            log('✅ CONNECTÉ au serveur !', 'green');
+        });
+        
+        socket.on('disconnect', () => {
+            log('❌ DÉCONNECTÉ', 'red');
+        });
+        
+        socket.on('room_created', (data) => {
+            log('🎉 Room créée ! Code : ' + data.code, 'blue');
+            alert('📋 TON CODE : ' + data.code + '\n\nDonne-le au 2ème joueur !');
+        });
+        
+        socket.on('game_start', (data) => {
+            log('🚀 PARTIE LANCÉE ! Les 2 joueurs sont connectés', 'green');
+            log('Joueurs : ' + data.players.join(', '), 'gray');
+        });
+        
+        socket.on('error', (data) => {
+            log('⚠️ Erreur : ' + data.msg, 'red');
+        });
+        
+        function createRoom() {
+            log('📤 Demande de création...', 'orange');
+            socket.emit('create_room');
+        }
+        
+        function joinRoom() {
+            const code = document.getElementById('codeInput').value.toUpperCase();
+            if (!code) {
+                alert('❌ Entre un code !');
+                return;
+            }
+            log('📤 Tentative de rejoindre : ' + code, 'orange');
+            socket.emit('join_room', { code: code });
+        }
+        
+        function log(message, color = 'black') {
+            const now = new Date().toLocaleTimeString();
+            document.getElementById('logs').innerHTML += 
+                `<div style="color: ${color}">[${now}] ${message}</div>`;
+        }
+    </script>
+</body>
+</html> -->
+
+/*
+extends Node
+
+const SERVER_URL = "wss://taxi-paint-server.onrender.com"
+#wss est un web socket securiser, render force le ssl dont obliger wss
+
+var socket: WebSocketPeer
+#ceci est l'objet godot qui gere la connexion
+
+
+var current_room_code = ""
+#node js gere plusieurs room simultanement
+#pour savoir a quel room elle corespond on use le room code pour
+#envoyer les info a la bonne room
+
+signal connected_to_server()
+signal disconnected_from_server()
+signal room_created(code: String)
+signal game_started()
+
+func _ready():
+	print("network mager initialized")
+	print("[NetworkManager] Instance créée - ID:", get_instance_id())
+
+	socket = WebSocketPeer.new()
+	
+func connect_to_server():
+	print("connexion au server....")
+	var err = socket.connect_to_url(SERVER_URL)
+	if err != OK:
+		print("erreur de connexion", err)
+	else:
+		print("connexion en cours..")
+	
+func _process(_delta):
+	if socket == null:
+		return
+	socket.poll()
+	var state = socket.get_ready_state()
+	if state == WebSocketPeer.STATE_CONNECTING:
+		print("[NETWORK MANAGER] En cours de connexion...")
+
+	if state == WebSocketPeer.STATE_OPEN:
+		print("[NETWORK MANAGER] Connecter!")
+		while socket.get_available_packet_count() > 0:
+			var packet = socket.get_packet()
+			var message = packet.get_string_from_utf8()
+			handle_message(message)
+	#elif state == WebSocketPeer.STATE_CLOSED:
+		#print("connexion fermer")
+
+func handle_message(message: String):
+	print("📩 Message reçu:", message)
+	
+	# Parser le JSON
+	var json = JSON.new()
+	var error = json.parse(message)
+	
+	if error != OK:
+		push_error("[NetworkManager] Erreur parsing JSON:", json.get_error_message())
+		return
+	
+	var data = json.get_data()
+	
+	if typeof(data) != TYPE_DICTIONARY:
+		push_error("[NetworkManager] Format invalide")
+		return
+	
+	# Traiter selon le type
+	var msg_type = data.get("type", "")
+	
+	match msg_type:
+		"room_created":
+			var code = data.get("code", "")
+			print("[NetworkManager] Room créée:", code)
+			current_room_code = code
+			room_created.emit(code)
+		
+		"game_start":
+			print("[NetworkManager] Partie lancée")
+			game_started.emit()
+		
+		_:
+			push_warning("[NetworkManager] Type inconnu:", msg_type)
+	
+func send_message(data: Dictionary):
+	if socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
+		push_error("[NETWORK MANAGER] socket fermer, impossible d'envoyer")
+		return
+	var json_string = JSON.stringify(data)
+	print("[NETWORK MANAGER] envoyer :", json_string)
+
+func create_room():
+	print("[NEWTWORK MANAGER]demande de create room")
+	send_message({"type": "create_room"})
+    */

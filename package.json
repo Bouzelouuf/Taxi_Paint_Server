@@ -1,16 +1,8 @@
 {
-  "name": "taxi_paint_server",
+  "name": "taxi-paint-server",
   "version": "1.0.0",
-  "description": "Serveur Node.js pour Taxi Paint",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
     "express": "^4.18.2",
-    "socket.io": "^4.8.1"
+    "ws": "^8.14.2"
   }
 }

@@ -1,121 +1,150 @@
 const express = require('express');
 const http = require('http');
-const { Server } = require('socket.io');
+const WebSocket = require('ws');
 
-// 1. Créer l'app Express
 const app = express();
 const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
 
-// 2. Créer Socket.io avec CORS
-const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
-});
-
-// 3. ⚡ PORT DYNAMIQUE pour Render
 const PORT = process.env.PORT || 3000;
+const rooms = new Map();
 
-// Route de test (pour vérifier que le serveur répond)
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    rooms: Object.keys(rooms).length 
-  });
-});
-
-// Stockage des rooms
-const rooms = {};
-
-// Générer code aléatoire (5 caractères)
 function generateCode() {
-  return Math.random().toString(36).substring(2, 7).toUpperCase();
+    return Math.random().toString(36).substring(2, 7).toUpperCase();
 }
 
-console.log('🚀 Serveur Socket.io en attente...');
-
-// Quand un client se connecte
-io.on('connection', (socket) => {
-  console.log('✅ Client connecté:', socket.id);
-  
-  // CRÉER UNE ROOM
-  socket.on('create_room', () => {
-    const code = generateCode();
-    rooms[code] = {
-      host: socket.id,
-      players: [socket.id],
-      createdAt: Date.now()
-    };
-    
-    socket.join(code);
-    socket.emit('room_created', { code });
-    
-    console.log('🏠 Room créée:', code, 'par', socket.id);
-  });
-  
-  // REJOINDRE UNE ROOM
-  socket.on('join_room', ({ code }) => {
-    console.log('🔍 Tentative de rejoindre:', code, 'par', socket.id);
-    
-    if (!rooms[code]) {
-      socket.emit('error', { msg: 'Room introuvable' });
-      console.log('❌ Room', code, 'introuvable');
-      return;
-    }
-    
-    if (rooms[code].players.length >= 2) {
-      socket.emit('error', { msg: 'Room pleine' });
-      console.log('❌ Room', code, 'pleine');
-      return;
-    }
-    
-    rooms[code].players.push(socket.id);
-    socket.join(code);
-    
-    console.log('✅ Joueur 2 a rejoint room', code);
-    
-    // Notifier les deux joueurs que la partie peut commencer
-    io.to(code).emit('game_start', {
-      players: rooms[code].players
+// Route santé
+app.get('/health', (req, res) => {
+    res.json({ 
+        status: 'ok', 
+        rooms: rooms.size,
+        connections: wss.clients.size
     });
-    
-    console.log('🎮 Partie lancée dans room', code);
-  });
-  
-  // MOUVEMENT JOUEUR
-  socket.on('player_move', (data) => {
-    socket.to(data.room).emit('opponent_move', {
-      position: data.position,
-      rotation: data.rotation
-    });
-  });
-  
-  // PEINTURE JOUEUR
-  socket.on('player_paint', (data) => {
-    socket.to(data.room).emit('opponent_paint', {
-      position: data.position,
-      color: data.color
-    });
-  });
-  
-  // DÉCONNEXION
-  socket.on('disconnect', () => {
-    console.log('❌ Client déconnecté:', socket.id);
-    
-    for (const code in rooms) {
-      const index = rooms[code].players.indexOf(socket.id);
-      if (index > -1) {
-        console.log('🧹 Nettoyage room', code);
-        socket.to(code).emit('opponent_disconnected');
-        delete rooms[code];
-      }
-    }
-  });
 });
 
-// 4. ⚡ LANCER LE SERVEUR avec le port dynamique
+// WebSocket
+wss.on('connection', (ws) => {
+    console.log('✅ Client connecté');
+    
+    ws.on('message', (data) => {
+        try {
+            const message = JSON.parse(data.toString());
+            console.log('📩 Reçu:', message);
+            
+            switch (message.type) {
+                case 'create_room':
+                    const code = generateCode();
+                    rooms.set(code, {
+                        host: ws,
+                        players: [ws],
+                        createdAt: Date.now()
+                    });
+                    
+                    ws.roomCode = code;
+                    ws.send(JSON.stringify({ 
+                        type: 'room_created', 
+                        code: code 
+                    }));
+                    
+                    console.log('🏠 Room créée:', code);
+                    break;
+                
+                case 'join_room':
+                    const room = rooms.get(message.code);
+                    
+                    if (!room) {
+                        ws.send(JSON.stringify({ 
+                            type: 'error', 
+                            msg: 'Room introuvable' 
+                        }));
+                        return;
+                    }
+                    
+                    if (room.players.length >= 2) {
+                        ws.send(JSON.stringify({ 
+                            type: 'error', 
+                            msg: 'Room pleine' 
+                        }));
+                        return;
+                    }
+                    
+                    room.players.push(ws);
+                    ws.roomCode = message.code;
+                    
+                    // Notifier les 2 joueurs
+                    room.players.forEach(player => {
+                        player.send(JSON.stringify({ 
+                            type: 'game_start' 
+                        }));
+                    });
+                    
+                    console.log('✅ Joueur 2 rejoint room', message.code);
+                    console.log('🎮 Partie lancée');
+                    break;
+                
+                case 'player_move':
+                    // Relayer aux autres
+                    const moveRoom = rooms.get(message.room);
+                    if (moveRoom) {
+                        moveRoom.players.forEach(player => {
+                            if (player !== ws && player.readyState === WebSocket.OPEN) {
+                                player.send(JSON.stringify({
+                                    type: 'opponent_move',
+                                    position: message.position,
+                                    rotation: message.rotation
+                                }));
+                            }
+                        });
+                    }
+                    break;
+                
+                case 'player_paint':
+                    // Relayer aux autres
+                    const paintRoom = rooms.get(message.room);
+                    if (paintRoom) {
+                        paintRoom.players.forEach(player => {
+                            if (player !== ws && player.readyState === WebSocket.OPEN) {
+                                player.send(JSON.stringify({
+                                    type: 'opponent_paint',
+                                    position: message.position,
+                                    color: message.color
+                                }));
+                            }
+                        });
+                    }
+                    break;
+            }
+        } catch (error) {
+            console.error('❌ Erreur parsing:', error);
+        }
+    });
+    
+    ws.on('close', () => {
+        console.log('❌ Client déconnecté');
+        
+        // Nettoyer les rooms
+        if (ws.roomCode) {
+            const room = rooms.get(ws.roomCode);
+            if (room) {
+                room.players = room.players.filter(p => p !== ws);
+                if (room.players.length === 0) {
+                    rooms.delete(ws.roomCode);
+                    console.log('🧹 Room supprimée:', ws.roomCode);
+                } else {
+                    // Notifier l'autre joueur
+                    room.players.forEach(p => {
+                        if (p.readyState === WebSocket.OPEN) {
+                            p.send(JSON.stringify({ 
+                                type: 'opponent_disconnected' 
+                            }));
+                        }
+                    });
+                }
+            }
+        }
+    });
+});
+
 server.listen(PORT, () => {
-  console.log(`✅ Serveur démarré sur port ${PORT}`);
-  console.log('En attente de connexions...\n');
+    console.log(`✅ Serveur WebSocket démarré sur port ${PORT}`);
 });
