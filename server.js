@@ -1,11 +1,28 @@
+const express = require('express');
+const http = require('http');
 const { Server } = require('socket.io');
 
-// Créer serveur Socket.io sur port 3000
-const io = new Server(3000, {
+// 1. Créer l'app Express
+const app = express();
+const server = http.createServer(app);
+
+// 2. Créer Socket.io avec CORS
+const io = new Server(server, {
   cors: {
-    origin: "*",  // Accepter toutes les origines (pour tests)
+    origin: "*",
     methods: ["GET", "POST"]
   }
+});
+
+// 3. ⚡ PORT DYNAMIQUE pour Render
+const PORT = process.env.PORT || 3000;
+
+// Route de test (pour vérifier que le serveur répond)
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    rooms: Object.keys(rooms).length 
+  });
 });
 
 // Stockage des rooms
@@ -16,8 +33,7 @@ function generateCode() {
   return Math.random().toString(36).substring(2, 7).toUpperCase();
 }
 
-console.log('🚀 Serveur démarré sur port 3000');
-console.log('En attente de connexions...\n');
+console.log('🚀 Serveur Socket.io en attente...');
 
 // Quand un client se connecte
 io.on('connection', (socket) => {
@@ -69,7 +85,6 @@ io.on('connection', (socket) => {
   
   // MOUVEMENT JOUEUR
   socket.on('player_move', (data) => {
-    // Relayer aux autres dans la room
     socket.to(data.room).emit('opponent_move', {
       position: data.position,
       rotation: data.rotation
@@ -78,7 +93,6 @@ io.on('connection', (socket) => {
   
   // PEINTURE JOUEUR
   socket.on('player_paint', (data) => {
-    // Relayer aux autres dans la room
     socket.to(data.room).emit('opponent_paint', {
       position: data.position,
       color: data.color
@@ -89,15 +103,19 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     console.log('❌ Client déconnecté:', socket.id);
     
-    // TODO: Nettoyer les rooms (plus tard)
     for (const code in rooms) {
       const index = rooms[code].players.indexOf(socket.id);
       if (index > -1) {
         console.log('🧹 Nettoyage room', code);
-        // Notifier l'autre joueur
         socket.to(code).emit('opponent_disconnected');
         delete rooms[code];
       }
     }
   });
+});
+
+// 4. ⚡ LANCER LE SERVEUR avec le port dynamique
+server.listen(PORT, () => {
+  console.log(`✅ Serveur démarré sur port ${PORT}`);
+  console.log('En attente de connexions...\n');
 });
