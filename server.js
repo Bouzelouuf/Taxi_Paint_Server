@@ -9,6 +9,28 @@ const wss = new WebSocket.Server({ server });
 const PORT = process.env.PORT || 3000;
 const rooms = new Map();
 
+// 🆕 Liste de mots pour le mode Pictionary
+const WORDS = [
+    "cat", "dog", "house", "sun", "moon",
+    "tree", "car", "plane", "boat", "flower",
+    "star", "fish", "bird", "mountain", "cloud",
+    "pizza", "book", "phone", "dolphin", "elephant",
+    "panda", "koala", "penguin", "taco", "sushi",
+    "cake", "ice cream", "fruit", "guitar", "hat",
+    "trump", "beyonce", "einstein", "harry", "frida",
+    "magic", "unicorn", "dragon", "robot", "fairy",
+    "monster", "yeti", "storm", "love", "joy",
+    "fear", "dream", "rainbow", "cactus", "pillow",
+    "skate", "dance", "swim", "jump", "sing",
+    "explore", "firework", "balloon", "rocket", "candy",
+    "leaf", "river", "ocean", "desert", "iceberg"
+];
+
+// 🆕 Fonction pour tirer un mot aléatoire
+function getRandomWord() {
+    return WORDS[Math.floor(Math.random() * WORDS.length)];
+}
+
 function generateCode() {
     return Math.random().toString(36).substring(2, 7).toUpperCase();
 }
@@ -43,9 +65,10 @@ wss.on('connection', (ws) => {
                         players: [ws],
                         mode: mode,
                         createdAt: Date.now(),
-                        // 🆕 Données pour PVP_DRAW
-                        currentRound: mode === 'PVP_DRAW' ? 1 : 0,
-                        drawerIsHost: true  // Manche 1 = HOST dessine
+                        // Données pour PVP_DRAW
+                        currentRound: 0,  // Sera initialisé à 1 lors du join
+                        drawerIsHost: true,
+                        currentWord: ""  // 🆕 Mot actuel
                     });
                     
                     ws.roomCode = code;
@@ -72,18 +95,25 @@ wss.on('connection', (ws) => {
                     
                     console.log('✅ Join room :', message.code, '- Mode :', room.mode);
                     
-                    // 🔥 ENVOYER LE MODE ET LES INFOS DE MANCHE
                     if (room.mode === 'PVP_DRAW') {
-                        // Mode Pictionary : envoyer les infos de manche
+                        // 🔥 Initialiser la première manche
+                        room.currentRound = 1;
+                        room.drawerIsHost = true;
+                        room.currentWord = getRandomWord();  // 🆕 Le serveur choisit le mot
+                        
+                        console.log('🎲 Mot choisi par le serveur:', room.currentWord);
+                        
+                        // Envoyer les infos de manche à TOUS les joueurs (host + join)
                         room.players.forEach(player => {
                             player.send(JSON.stringify({ 
                                 type: 'game_start',
                                 mode: room.mode,
                                 round: room.currentRound,
-                                drawerIsHost: room.drawerIsHost
+                                drawerIsHost: room.drawerIsHost,
+                                word: room.currentWord  // 🆕 Envoyer le mot
                             }));
                         });
-                        console.log('📤 Infos manche envoyées - Round:', room.currentRound, 'Drawer:', room.drawerIsHost);
+                        console.log('📤 Manche 1 démarrée - Drawer: HOST - Mot:', room.currentWord);
                     } else {
                         // Mode classique (Paint)
                         room.players.forEach(player => {
@@ -127,25 +157,30 @@ wss.on('connection', (ws) => {
                     }
                     break;
                 
-                // 🆕 Changement de manche (envoyé par le HOST)
-                case 'next_round':
-                    const nextRoom = rooms.get(message.room);
-                    if (nextRoom && nextRoom.mode === 'PVP_DRAW') {
-                        nextRoom.currentRound++;
-                        nextRoom.drawerIsHost = (nextRoom.currentRound % 2 === 1);
+                // 🆕 Fin de manche (envoyé par le HOST)
+                case 'round_finished':
+                    const finishRoom = rooms.get(message.room);
+                    if (finishRoom && finishRoom.mode === 'PVP_DRAW') {
+                        finishRoom.currentRound++;
+                        finishRoom.drawerIsHost = (finishRoom.currentRound % 2 === 1);
+                        finishRoom.currentWord = getRandomWord();  // 🆕 Nouveau mot pour la nouvelle manche
                         
-                        console.log('🔄 Manche suivante - Round:', nextRoom.currentRound, 'Drawer:', nextRoom.drawerIsHost);
+                        console.log('✅ Manche terminée - Nouvelle manche:', finishRoom.currentRound);
+                        console.log('🎲 Nouveau mot:', finishRoom.currentWord);
                         
                         // Envoyer aux deux joueurs
-                        nextRoom.players.forEach(player => {
+                        finishRoom.players.forEach(player => {
                             player.send(JSON.stringify({
                                 type: 'round_changed',
-                                round: nextRoom.currentRound,
-                                drawerIsHost: nextRoom.drawerIsHost
+                                round: finishRoom.currentRound,
+                                drawerIsHost: finishRoom.drawerIsHost,
+                                word: finishRoom.currentWord  // 🆕 Envoyer le nouveau mot
                             }));
                         });
                     }
                     break;
+                
+                // ❌ SUPPRIMER le case 'next_round' (remplacé par 'round_finished')
             }
         } catch (error) {
             console.error('❌ Erreur parsing:', error);
