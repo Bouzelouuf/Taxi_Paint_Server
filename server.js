@@ -80,7 +80,20 @@ wss.on('connection', (ws) => {
                         mode: mode
                     }));
                     break;
-                
+                case 'correct_answer':
+                    const answerRoom = rooms.get(message.room);
+                    if (answerRoom && answerRoom.mode === 'PVP_DRAW') {
+                        console.log('✅ Bonne réponse trouvée dans la room:', message.room);
+                        
+                        // Prévenir les deux joueurs
+                        answerRoom.players.forEach(player => {
+                            player.send(JSON.stringify({
+                                type: 'round_ended',
+                                reason: 'correct_answer'
+                            }));
+                        });
+                    }
+                    break;
                 case 'join_room':
                     const room = rooms.get(message.code);
                     
