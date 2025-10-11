@@ -43,12 +43,9 @@ wss.on('connection', (ws) => {
                         players: [ws],
                         mode: mode,
                         createdAt: Date.now(),
-                        // 🆕 Données spécifiques PVP_DRAW
-                        currentRound: 0,
-                        maxRounds: 3,
-                        drawerIsHost: true,
-                        hostScore: 0,
-                        joinScore: 0
+                        // 🆕 Données pour PVP_DRAW
+                        currentRound: mode === 'PVP_DRAW' ? 1 : 0,
+                        drawerIsHost: true  // Manche 1 = HOST dessine
                     });
                     
                     ws.roomCode = code;
@@ -75,86 +72,76 @@ wss.on('connection', (ws) => {
                     
                     console.log('✅ Join room :', message.code, '- Mode :', room.mode);
                     
-                    // 🔥 ENVOYER LE MODE AUX DEUX JOUEURS
-                    room.players.forEach(player => {
-                        player.send(JSON.stringify({ 
-                            type: 'game_start',
-                            mode: room.mode
-                        }));
-                    });
-                    break;
-                
-                case 'player_move':
-                    relayToOthers(ws, message.room, {
-                        type: 'opponent_move',
-                        position: message.position,
-                        rotation: message.rotation
-                    });
-                    break;
-                
-                case 'player_paint':
-                    relayToOthers(ws, message.room, {
-                        type: 'opponent_paint',
-                        position: message.position,
-                        color: message.color
-                    });
-                    break;
-                
-                // 🆕 GESTION PICTIONARY
-                case 'start_round':
-                    const roundRoom = rooms.get(message.room);
-                    if (roundRoom) {
-                        roundRoom.currentRound = message.round;
-                        roundRoom.drawerIsHost = message.drawerIsHost;
-                        
-                        console.log('🎨 Manche', message.round, '- Drawer:', roundRoom.drawerIsHost ? 'Host' : 'Join');
-                        
-                        // Envoyer aux deux joueurs
-                        roundRoom.players.forEach(player => {
-                            player.send(JSON.stringify({
-                                type: 'round_started',
-                                round: message.round,
-                                drawerIsHost: message.drawerIsHost,
-                                word: player.isHost === roundRoom.drawerIsHost ? message.word : null
+                    // 🔥 ENVOYER LE MODE ET LES INFOS DE MANCHE
+                    if (room.mode === 'PVP_DRAW') {
+                        // Mode Pictionary : envoyer les infos de manche
+                        room.players.forEach(player => {
+                            player.send(JSON.stringify({ 
+                                type: 'game_start',
+                                mode: room.mode,
+                                round: room.currentRound,
+                                drawerIsHost: room.drawerIsHost
+                            }));
+                        });
+                        console.log('📤 Infos manche envoyées - Round:', room.currentRound, 'Drawer:', room.drawerIsHost);
+                    } else {
+                        // Mode classique (Paint)
+                        room.players.forEach(player => {
+                            player.send(JSON.stringify({ 
+                                type: 'game_start',
+                                mode: room.mode
                             }));
                         });
                     }
                     break;
                 
-                case 'guess_word':
-                    const guessRoom = rooms.get(message.room);
-                    if (guessRoom) {
-                        console.log('🔍 Guess reçu:', message.guess, '- Correct:', message.correct);
-                        
-                        if (message.correct) {
-                            // Mettre à jour les scores
-                            if (ws.isHost) {
-                                guessRoom.hostScore++;
-                            } else {
-                                guessRoom.joinScore++;
-                            }
-                            
-                            // Notifier les deux joueurs
-                            guessRoom.players.forEach(player => {
+                case 'player_move':
+                    // Relayer aux autres
+                    const moveRoom = rooms.get(message.room);
+                    if (moveRoom) {
+                        moveRoom.players.forEach(player => {
+                            if (player !== ws && player.readyState === WebSocket.OPEN) {
                                 player.send(JSON.stringify({
-                                    type: 'round_ended',
-                                    guesserWon: true,
-                                    hostScore: guessRoom.hostScore,
-                                    joinScore: guessRoom.joinScore
+                                    type: 'opponent_move',
+                                    position: message.position,
+                                    rotation: message.rotation
                                 }));
-                            });
-                        }
+                            }
+                        });
                     }
                     break;
                 
-                case 'end_match':
-                    const matchRoom = rooms.get(message.room);
-                    if (matchRoom) {
-                        matchRoom.players.forEach(player => {
+                case 'player_paint':
+                    // Relayer aux autres
+                    const paintRoom = rooms.get(message.room);
+                    if (paintRoom) {
+                        paintRoom.players.forEach(player => {
+                            if (player !== ws && player.readyState === WebSocket.OPEN) {
+                                player.send(JSON.stringify({
+                                    type: 'opponent_paint',
+                                    position: message.position,
+                                    color: message.color
+                                }));
+                            }
+                        });
+                    }
+                    break;
+                
+                // 🆕 Changement de manche (envoyé par le HOST)
+                case 'next_round':
+                    const nextRoom = rooms.get(message.room);
+                    if (nextRoom && nextRoom.mode === 'PVP_DRAW') {
+                        nextRoom.currentRound++;
+                        nextRoom.drawerIsHost = (nextRoom.currentRound % 2 === 1);
+                        
+                        console.log('🔄 Manche suivante - Round:', nextRoom.currentRound, 'Drawer:', nextRoom.drawerIsHost);
+                        
+                        // Envoyer aux deux joueurs
+                        nextRoom.players.forEach(player => {
                             player.send(JSON.stringify({
-                                type: 'match_ended',
-                                hostScore: matchRoom.hostScore,
-                                joinScore: matchRoom.joinScore
+                                type: 'round_changed',
+                                round: nextRoom.currentRound,
+                                drawerIsHost: nextRoom.drawerIsHost
                             }));
                         });
                     }
@@ -168,6 +155,7 @@ wss.on('connection', (ws) => {
     ws.on('close', () => {
         console.log('❌ Client déconnecté');
         
+        // Nettoyer les rooms
         if (ws.roomCode) {
             const room = rooms.get(ws.roomCode);
             if (room) {
@@ -176,6 +164,7 @@ wss.on('connection', (ws) => {
                     rooms.delete(ws.roomCode);
                     console.log('🧹 Room supprimée:', ws.roomCode);
                 } else {
+                    // Notifier l'autre joueur
                     room.players.forEach(p => {
                         if (p.readyState === WebSocket.OPEN) {
                             p.send(JSON.stringify({ 
@@ -188,18 +177,6 @@ wss.on('connection', (ws) => {
         }
     });
 });
-
-// Fonction helper pour relayer aux autres joueurs
-function relayToOthers(sender, roomCode, data) {
-    const room = rooms.get(roomCode);
-    if (room) {
-        room.players.forEach(player => {
-            if (player !== sender && player.readyState === WebSocket.OPEN) {
-                player.send(JSON.stringify(data));
-            }
-        });
-    }
-}
 
 server.listen(PORT, () => {
     console.log(`✅ Serveur WebSocket démarré sur port ${PORT}`);
